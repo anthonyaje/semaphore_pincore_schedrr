@@ -5,12 +5,15 @@
 #include <cstdlib>
 #include <errno.h>      // errno
 #include <iostream>     // cout cerr
-#include <semaphore.h>  // semaphore
 #include <fcntl.h>      // O_CREAT
 #include <unistd.h>     // fork
+#include <stdlib.h>
 #include <string.h>     // cpp string
+#include <sys/sem.h>
 #include <sys/types.h>  // 
 #include <sys/wait.h>   // wait()
+
+#define n_child 3
 
 int set_scheduler( int pid, int prio ) {
    int old_sched_policy = sched_getscheduler( pid );    
@@ -28,15 +31,21 @@ int set_scheduler( int pid, int prio ) {
 
 }
 
-int init_semaphore(){ 
-   std::string sname = "/SEM_CORE";
-   sem_t* sem = sem_open ( sname.c_str(), O_CREAT, 0644, 1 );
-   if ( sem == SEM_FAILED ) { 
-      std::cerr << "sem_open failed!\n";
-      return -1;
+int init_vsem( char* pathtokey, int nsems ) { 
+   key_t sem_key = ftok( pathtokey, 100 );   // 100 is proj_id
+   int sem_flag = IPC_CREAT | 0666;
+   int sem_id;
+   sem_id = semget( sem_key, nsems, sem_flag );
+   if ( sem_id < 0 ) { 
+      std::cerr << "sem_get() failed!\n";
+      std::cerr << "errno: " << strerror( errno ) << std::endl;
+      return sem_id;
+   } else {
+      semctl( sem_id, 0, SETVAL, 1 ); // initialize the semaphore
+      for ( int i=1; i < nsems; i++ ) { 
+         semctl( sem_id, i, SETVAL, 0 ); // initialize the semaphore
+      }
    }
-
-   sem_init( sem, 0, 1 );
    return 0;
 }
 
@@ -46,8 +55,9 @@ int fork_and_exec( std::string pname, char* cpuid ){
    int pid = fork();
    if ( pid == 0) {
       // Child
+      std::string next_pname = std::to_string( ( stoi( pname ) + 1 ) % n_child );
       char* const params[] = { "./rr-task", "99", strdup( pname.c_str() ),
-                               cpuid, NULL };
+                               cpuid, strdup( next_pname.c_str() ) , NULL };
       execv( params[0], params );
       exit(0);
    } 
@@ -62,18 +72,18 @@ int main( int argc, char* argv[] ) {
       printf( "Usage ./set_scheduler <cpuid> \n" );
 
    char* cpuid = argv[1];
-   std::string pnames[2] = { "p111", "p222" };
 
-   init_semaphore();
+   init_vsem(  "/home/h4bian/aqua10/sched_study/VSEM", n_child );
    
-   int childid[ 2 ] = { 0 };
-   int i = 0;
-   for( std::string pname : pnames ){
+   int childid[ n_child ] = { 0 };
+   for ( int i=0; i < n_child; i++ ){
+      std::string pname =  std::to_string( i );
+      std::cout << "PNAME: " << pname << std::endl;
       childid[ i ] = fork_and_exec( pname, cpuid );
-      set_scheduler( childid[ i++ ], 99 );
+      set_scheduler( childid[ i ], 99 );
    }
    
-   for ( i=0; i<2; i++ )
+   for ( int i=0; i < n_child; i++ )
       if ( waitpid( childid[i], NULL, 0 ) < 0 )
          perror( "waitpid() failed.\n" );
 
