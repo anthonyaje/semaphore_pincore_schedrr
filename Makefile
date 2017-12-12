@@ -1,7 +1,7 @@
 all : rr-task set_scheduler 
 
 rr-task.o: rr-task.cc
-	g++ -c rr-task.cc -o rr-task.o
+	g++ -c rr-task.cc -Wno-write-strings -std=c++11 -o rr-task.o
 
 set_scheduler.o: set_scheduler.cc
 	g++ -c set_scheduler.cc -Wno-write-strings -std=c++11 -o set_scheduler.o

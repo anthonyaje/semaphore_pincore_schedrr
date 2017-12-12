@@ -1,5 +1,4 @@
 // Author: Anthony Anthony.
-
 #include <sched.h>      // SCHED_RR
 #include <stdio.h>
 #include <cstdlib>
@@ -11,6 +10,11 @@
 #include <string.h>     // cpp string
 #include <sys/types.h>  // 
 #include <sys/wait.h>   // wait()
+
+#define n_child 2
+
+sem_t* sem[ n_child ] = { NULL };
+const char* sem_names[ n_child ] = { NULL };
 
 int set_scheduler( int pid, int prio ) {
    int old_sched_policy = sched_getscheduler( pid );    
@@ -29,14 +33,22 @@ int set_scheduler( int pid, int prio ) {
 }
 
 int init_semaphore(){ 
-   std::string sname = "/SEM_CORE";
-   sem_t* sem = sem_open ( sname.c_str(), O_CREAT, 0644, 1 );
-   if ( sem == SEM_FAILED ) { 
-      std::cerr << "sem_open failed!\n";
-      return -1;
+   for ( int i=0; i < n_child; i++  ) {
+      std::string sname = "/SEM_CORE" + std::to_string( i );
+      sem_names[ i ] = sname.c_str();
+      unsigned init_val = 0;
+      if( i == 0 ) {
+         init_val = 1;
+      } 
+      printf( "Creating semaphore: %s. init_val: %u. \n", sname.c_str(), init_val );
+      fflush( stdout );
+      sem[ i ] = sem_open ( sname.c_str(), O_CREAT, 0644, init_val );
+      sem_init( sem[ i ], 0, init_val );
+      if ( sem[ i ] == SEM_FAILED ) { 
+         perror( "sem_open failed!." );
+         return -1;
+      }
    }
-
-   sem_init( sem, 0, 1 );
    return 0;
 }
 
@@ -62,20 +74,27 @@ int main( int argc, char* argv[] ) {
       printf( "Usage ./set_scheduler <cpuid> \n" );
 
    char* cpuid = argv[1];
-   std::string pnames[2] = { "p111", "p222" };
+   std::string pnames[ n_child ];
+   
+   int childid[ n_child ] = { 0 };
+   int i;
 
    init_semaphore();
-   
-   int childid[ 2 ] = { 0 };
-   int i = 0;
-   for( std::string pname : pnames ){
-      childid[ i ] = fork_and_exec( pname, cpuid );
-      set_scheduler( childid[ i++ ], 99 );
+
+   for( i=0; i < n_child; i++ ){
+      pnames[ i ] = std::to_string( i );
+      childid[ i ] = fork_and_exec( pnames[i].c_str(), cpuid );
+//      set_scheduler( childid[ i ], 99 );
    }
    
-   for ( i=0; i<2; i++ )
+   for ( i=0; i < n_child; i++ )
       if ( waitpid( childid[i], NULL, 0 ) < 0 )
          perror( "waitpid() failed.\n" );
+
+   for ( i=0; i < n_child; i++ ) {
+      sem_close( sem[ i ] );
+      sem_unlink( sem_names[ i ] );
+   }
 
    return 0;
 }
