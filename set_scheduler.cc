@@ -9,11 +9,12 @@
 #include <unistd.h>     // fork
 #include <stdlib.h>
 #include <string.h>     // cpp string
-#include <sys/sem.h>
+#include <semaphore.h>
 #include <sys/types.h>  // 
 #include <sys/wait.h>   // wait()
 
 #define n_child 3
+sem_t* sm; 
 
 int set_scheduler( int pid, int prio ) {
    int old_sched_policy = sched_getscheduler( pid );    
@@ -21,31 +22,26 @@ int set_scheduler( int pid, int prio ) {
    param.sched_priority = prio;
    int rc = sched_setscheduler( pid, SCHED_RR, &param );
    if (rc == -1) {                                               
-      printf("sched_setscheduler call is failed\n");
-      printf("errno: %d\n", errno);             
+      perror( "sched_setscheduler call is failed." );             
+      exit (-1);
    }                                                             
    else {                                                        
       printf("Old Scheduler: %d\n", old_sched_policy);           
       printf("Current Scheduler: %d\n", sched_getscheduler( pid ));
+      return 0;
    }                                                             
 
 }
 
-int init_vsem( char* pathtokey, int nsems ) { 
-   key_t sem_key = ftok( pathtokey, 100 );   // 100 is proj_id
-   int sem_flag = IPC_CREAT | 0666;
-   int sem_id;
-   sem_id = semget( sem_key, nsems, sem_flag );
-   if ( sem_id < 0 ) { 
-      std::cerr << "sem_get() failed!\n";
-      std::cerr << "errno: " << strerror( errno ) << std::endl;
-      return sem_id;
-   } else {
-      semctl( sem_id, 0, SETVAL, 1 ); // initialize the semaphore
-      for ( int i=1; i < nsems; i++ ) { 
-         semctl( sem_id, i, SETVAL, 0 ); // initialize the semaphore
-      }
+int init_semaphore( std::string sem_name, int val ){ 
+   printf( "creating semaphore: %s\n", sem_name.c_str() );
+   sm = sem_open ( sem_name.c_str(), O_CREAT, 0644, val );
+   if ( sm == SEM_FAILED ) { 
+      perror( "sem_open failed!" );
+      return -1;
    }
+
+   sem_init( sm, 0, val );
    return 0;
 }
 
@@ -72,15 +68,22 @@ int main( int argc, char* argv[] ) {
       printf( "Usage ./set_scheduler <cpuid> \n" );
 
    char* cpuid = argv[1];
-
-   init_vsem(  "/home/h4bian/aqua10/sched_study/VSEM", n_child );
-   
    int childid[ n_child ] = { 0 };
+   
+   for ( int i=0; i < n_child; i++ ) {
+      std::string sem_name = "/SEM" + std::to_string( i );
+      if ( i == 0 )
+         init_semaphore( sem_name, 1 );
+      else
+         init_semaphore( sem_name, 0 );
+   }
+
    for ( int i=0; i < n_child; i++ ){
       std::string pname =  std::to_string( i );
       std::cout << "PNAME: " << pname << std::endl;
+      
       childid[ i ] = fork_and_exec( pname, cpuid );
-      set_scheduler( childid[ i ], 99 );
+      //set_scheduler( childid[ i ], 99 );
    }
    
    for ( int i=0; i < n_child; i++ )

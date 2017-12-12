@@ -1,4 +1,5 @@
 // Author: Anthony Anthony.
+
 #include <cstdlib>
 #include <stdio.h>
 #include <sched.h>
@@ -8,11 +9,14 @@
 #include <string.h>
 #include <iostream>
 #include <sys/types.h>
-#include <sys/ipc.h>
-#include <sys/sem.h>
+#include <semaphore.h>
 #include <fcntl.h>      // O_CREAT
 
+sem_t *sm;
+sem_t *n_sm;
+
 int set_cpu_affinity( int cpuid ) {
+   printf( "Setting cpu affinity to core: %d\n", cpuid );
    pthread_t current_thread = pthread_self();                          
    cpu_set_t cpuset;                                                   
    CPU_ZERO( &cpuset );                                                  
@@ -21,62 +25,65 @@ int set_cpu_affinity( int cpuid ) {
                                   sizeof( cpu_set_t ), &cpuset ); 
 }
 
-int lookup_vsem( char* pathtokey ) {
-   key_t sem_key = ftok( pathtokey, 100 );
-   int sem_flag = 0666;
-   int sem_id;
-   sem_id = semget( sem_key, 0, sem_flag );
-   if ( sem_id < 0 ) { 
-      std::cerr << "sem_get() failed!\n";
-      std::cerr << "errno: " << strerror( errno ) << std::endl;
-   } 
-   return sem_id;
-}
+int lookup_posix_sem( const char* sem_name, sem_t* sema ) {
+   sema = sem_open( sem_name, O_RDWR );
+   if ( sema == SEM_FAILED ) {
+      perror( "sem_open failed!" );
+      return -1;
+   }
 
-int wait_vsem( int* semid, int idx ) {
-   struct sembuf sb;
-   sb.sem_num = idx;
-   sb.sem_op = -1; 
-   sb.sem_flg = 0;
-   return semop( *semid, &sb, 1 );
-}
-
-int post_vsem( int* semid, int idx ) {
-   struct sembuf sb;
-   sb.sem_num = idx;
-   sb.sem_op = 1;
-   sb.sem_flg = 0;
-   return semop( *semid, &sb, 1 );
+   return 0;
 }
 
 int main( int argc, char* argv[] ) {
-   printf( "Usage: ./rr-task <PRIORITY> <PROCESS-NAME> <CPUID> <NEXT_SEM_ID>\n" );
-
+   if ( argc <= 1 )
+      printf( "Usage: ./rr-task <PRIORITY> <PROCESS-NAME> <CPUID> <NEXT_SEM_ID>\n" );
    set_cpu_affinity( atoi( argv[3] ) );
-   int pname = atoi( argv[2] );
-   int next_pname = atoi( argv[4] );
-   int semid = lookup_vsem( "/home/h4bian/aqua10/sched_study/VSEM" );
+   std::string pname ( argv[2] );
+   std::string next_pname ( argv[4] );
+   std::string my_sem_name = "/SEM" + pname;
+   std::string next_sem_name = "/SEM" + next_pname;
 
-   int res;
+   int res = lookup_posix_sem( my_sem_name.c_str(), sm );
+   if ( res < 0 )
+      perror( "FAILED: lookup_posix_sem(). errno");
+
+   res = lookup_posix_sem( next_sem_name.c_str(), n_sm );
+   if ( res < 0 )
+      perror( "FAILED: lookup_posix_sem(). errno");
+
    uint32_t n = 0; 
-   while ( 1 ) { 
-      res = wait_vsem( &semid, pname );
-      if( res != 0 ) {
-         printf(" sem_wait %s. errno: %d\n", argv[2], errno);             
-      }
-                
+   printf( "Before while loop. my_sem_name: %s. next_sem_name: %s \n", my_sem_name.c_str(), next_sem_name.c_str() );
+   fflush( stdout );
+   while ( 1 ) {
+      //std::cout << pname.c_str() << std::endl;
       n += 1;
-      if ( !( n % 100000 ) ) {
+      if ( !( n % 10000 ) ) {
+         int val;
+         sem_getvalue( sm, &val );
+         
+         std::cout << "begin pname: " <<pname.c_str() << "val: " << val  << std::endl;
+        
+         res = sem_wait( sm );
+         std::cout << "res: " << res << std::endl;
+         if( res < 0 ) {           
+            perror( "Failed sem_wait. Errno:" );
+         }      
+
          printf( "Inst:%s RR Prio %s running (n=%u)\n", argv[2], argv[1], n );
          fflush( stdout );
-         //sched_yield();
-      }
 
-      res = post_vsem( &semid, next_pname );
-      if( res != 0 ) {
-         printf(" sem_post %s. errno: %d\n", argv[2], errno);             
+         res = sem_post( n_sm );
+         if( res < 0 ) {           
+            perror( "Failed sem_post. Errno:" );
+         }      
+         std::cout << "end pname: " <<pname.c_str() << std::endl;
+         
+         sched_yield();
       }
-      
-      sched_yield();
+      //sched_yield();
    }
+
+   sem_close( sm );
+   sem_close( n_sm );
 }
